@@ -1,0 +1,17 @@
+.tab { animation: tabIn .2s ease; transition: transform .2s ease, opacity .2s ease; }
+.tab:hover { transform: translateY(-2px); }
+.sidebar.open { animation: slideIn .25s ease; }
+.tab-loading { width:8px; height:8px; border-radius:50%; background:transparent; border:2px solid transparent; border-top-color:var(--accent); }
+.tab-loading.spinning { animation: spin .8s linear infinite; }
+
+@keyframes tabIn {
+  from { opacity:0; transform: scale(.94); }
+  to { opacity:1; transform: scale(1); }
+}
+
+@keyframes slideIn {
+  from { opacity:0; transform: translateX(-8px); }
+  to { opacity:1; transform: translateX(0); }
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
