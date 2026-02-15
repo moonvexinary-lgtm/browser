@@ -1,0 +1,228 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import AddressBar from './AddressBar';
+import BrowserView from './BrowserView';
+import SettingsPanel from './SettingsPanel';
+import Sidebar from './Sidebar';
+import TabBar from './TabBar';
+import { HOME_URL, normalizeInput } from '../state/url';
+import { BookmarkEntry, BrowserTab, DownloadItem, HistoryEntry, Settings } from '../types/browser';
+
+const id = () => crypto.randomUUID();
+
+const newTab = (url = HOME_URL): BrowserTab => ({
+  id: id(),
+  title: 'New Tab',
+  url,
+  isActive: true,
+  isLoading: false,
+  canGoBack: false,
+  canGoForward: false
+});
+
+export default function App() {
+  const [tabs, setTabs] = useState<BrowserTab[]>([newTab()]);
+  const [activeId, setActiveId] = useState<string>('');
+  const [addressValue, setAddressValue] = useState(HOME_URL);
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [bookmarks, setBookmarks] = useState<BookmarkEntry[]>([]);
+  const [downloads, setDownloads] = useState<DownloadItem[]>([]);
+  const [settings, setSettings] = useState<Settings>({ theme: 'dark', searchEngine: 'duckduckgo' });
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarView, setSidebarView] = useState<'history' | 'bookmarks'>('history');
+  const webviewRefs = useRef<Record<string, Electron.WebviewTag | null>>({});
+
+  const activeTab = useMemo(() => tabs.find((tab) => tab.id === activeId) || tabs[0], [tabs, activeId]);
+
+  useEffect(() => {
+    const first = tabs[0]?.id;
+    if (first && !activeId) setActiveId(first);
+  }, [tabs, activeId]);
+
+  useEffect(() => {
+    if (!window.novaAPI) return;
+    window.novaAPI.getAllData().then((data) => {
+      setHistory(data.history || []);
+      setBookmarks(data.bookmarks || []);
+      setDownloads(data.downloads || []);
+      setSettings(data.settings || { theme: 'dark', searchEngine: 'duckduckgo' });
+    });
+  }, []);
+
+  useEffect(() => {
+    document.body.dataset.theme = settings.theme;
+  }, [settings.theme]);
+
+  useEffect(() => {
+    if (activeTab) setAddressValue(activeTab.url);
+  }, [activeTab]);
+
+  const updateTab = useCallback((tabId: string, patch: Partial<BrowserTab>) => {
+    setTabs((prev) => prev.map((tab) => (tab.id === tabId ? { ...tab, ...patch } : tab)));
+  }, []);
+
+  const createTab = useCallback((url = HOME_URL) => {
+    const tab = newTab(url);
+    setTabs((prev) => prev.map((t) => ({ ...t, isActive: false })).concat(tab));
+    setActiveId(tab.id);
+  }, []);
+
+  const closeTab = useCallback((tabId: string) => {
+    setTabs((prev) => {
+      if (prev.length === 1) return prev;
+      const next = prev.filter((tab) => tab.id !== tabId);
+      if (tabId === activeId) setActiveId(next[next.length - 1].id);
+      return next;
+    });
+  }, [activeId]);
+
+  const navigateActive = useCallback((input: string) => {
+    if (!activeTab) return;
+    const url = normalizeInput(input, settings.searchEngine);
+    const view = webviewRefs.current[activeTab.id];
+    if (view) view.loadURL(url);
+    updateTab(activeTab.id, { url, isLoading: true });
+    setAddressValue(url);
+  }, [activeTab, settings.searchEngine, updateTab]);
+
+  const navigateCommand = (action: 'back' | 'forward' | 'reload' | 'home') => {
+    if (!activeTab) return;
+    const view = webviewRefs.current[activeTab.id];
+    if (!view) return;
+    if (action === 'back' && view.canGoBack()) view.goBack();
+    if (action === 'forward' && view.canGoForward()) view.goForward();
+    if (action === 'reload') view.reload();
+    if (action === 'home') navigateActive(HOME_URL);
+  };
+
+  const onVisited = useCallback((tabId: string, title: string, url: string) => {
+    if (!url.startsWith('http')) return;
+    const entry: HistoryEntry = { id: id(), title: title || url, url, timestamp: new Date().toISOString() };
+    setHistory((prev) => [entry, ...prev]);
+    window.novaAPI?.addHistoryEntry(entry);
+    updateTab(tabId, { title: title || url, url });
+  }, [updateTab]);
+
+  const addBookmark = async () => {
+    if (!activeTab) return;
+    const bookmark: BookmarkEntry = { id: id(), title: activeTab.title || activeTab.url, url: activeTab.url, folder: 'General' };
+    const next = [bookmark, ...bookmarks.filter((b) => b.url !== bookmark.url)];
+    setBookmarks(next);
+    await window.novaAPI?.saveBookmarks(next);
+    setSidebarOpen(true);
+    setSidebarView('bookmarks');
+  };
+
+  const removeBookmark = async (bookmarkId: string) => {
+    const next = bookmarks.filter((b) => b.id !== bookmarkId);
+    setBookmarks(next);
+    await window.novaAPI?.saveBookmarks(next);
+  };
+
+  const clearHistory = async () => {
+    setHistory([]);
+    await window.novaAPI?.clearHistory();
+  };
+
+  const updateSettings = async (patch: Partial<Settings>) => {
+    const next = { ...settings, ...patch };
+    setSettings(next);
+    await window.novaAPI?.saveSettings(patch);
+  };
+
+  const onDownloadHint = useCallback((url: string) => {
+    const item: DownloadItem = {
+      id: id(),
+      fileName: url.split('/').pop() || 'file.bin',
+      url,
+      status: 'completed',
+      timestamp: new Date().toISOString()
+    };
+    setDownloads((prev) => [item, ...prev]);
+    window.novaAPI?.addDownload(item);
+  }, []);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const mod = event.metaKey || event.ctrlKey;
+      if (mod && event.key.toLowerCase() === 't') {
+        event.preventDefault();
+        createTab();
+      }
+      if (mod && event.key.toLowerCase() === 'w' && activeTab) {
+        event.preventDefault();
+        closeTab(activeTab.id);
+      }
+      if (mod && event.key.toLowerCase() === 'l') {
+        event.preventDefault();
+        document.getElementById('address-input')?.focus();
+      }
+      if (mod && event.key.toLowerCase() === 'h') {
+        event.preventDefault();
+        setSidebarOpen(true);
+        setSidebarView('history');
+      }
+      if (mod && event.key.toLowerCase() === 'b') {
+        event.preventDefault();
+        setSidebarOpen(true);
+        setSidebarView('bookmarks');
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [activeTab, closeTab, createTab]);
+
+  return (
+    <div className="app-shell">
+      <TabBar tabs={tabs} activeId={activeId} onSelect={setActiveId} onClose={closeTab} onNewTab={createTab} />
+      <AddressBar
+        value={addressValue}
+        loading={!!activeTab?.isLoading}
+        canGoBack={!!activeTab?.canGoBack}
+        canGoForward={!!activeTab?.canGoForward}
+        onChange={setAddressValue}
+        onSubmit={() => navigateActive(addressValue)}
+        onBack={() => navigateCommand('back')}
+        onForward={() => navigateCommand('forward')}
+        onReload={() => navigateCommand('reload')}
+        onHome={() => navigateCommand('home')}
+        onBookmark={addBookmark}
+        onToggleSidebar={() => setSidebarOpen((v) => !v)}
+      />
+
+      <div className="content-grid">
+        <Sidebar
+          open={sidebarOpen}
+          view={sidebarView}
+          history={history}
+          bookmarks={bookmarks}
+          onNavigate={(url) => {
+            navigateActive(url);
+            setSidebarOpen(false);
+          }}
+          onDeleteBookmark={removeBookmark}
+          onClearHistory={clearHistory}
+          onSwitchView={setSidebarView}
+        />
+
+        <BrowserView
+          tabs={tabs}
+          activeId={activeId}
+          webviewRefs={webviewRefs}
+          onTabUpdate={updateTab}
+          onVisited={onVisited}
+          onDownloadHint={onDownloadHint}
+        />
+      </div>
+
+      <div className="bottom-strip glass">
+        <div>Downloads: {downloads.length}</div>
+        <div className="downloads-mini">
+          {downloads.slice(0, 3).map((d) => (
+            <span key={d.id}>{d.fileName}</span>
+          ))}
+        </div>
+        <SettingsPanel settings={settings} onUpdate={updateSettings} />
+      </div>
+    </div>
+  );
+}
