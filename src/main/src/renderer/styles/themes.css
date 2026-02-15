@@ -1,0 +1,23 @@
+:root {
+  --bg: #0e1118;
+  --text: #e8ecf5;
+  --glass: rgba(18, 24, 34, 0.7);
+  --border: rgba(255,255,255,0.12);
+  --button: #1b2331;
+  --button-hover: #243146;
+  --input: #101620;
+  --accent: #59a7ff;
+  --accent-soft: rgba(89, 167, 255, 0.2);
+}
+
+body[data-theme='light'] {
+  --bg: linear-gradient(120deg, #f5f8ff, #eef4ff);
+  --text: #1a2334;
+  --glass: rgba(255,255,255,.78);
+  --border: rgba(17,24,39,0.16);
+  --button: #eef2fb;
+  --button-hover: #e3eafa;
+  --input: #ffffff;
+  --accent: #386bff;
+  --accent-soft: rgba(56, 107, 255, 0.2);
+}
